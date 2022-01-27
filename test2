@@ -1,0 +1,177 @@
+s = struct('f',0)
+s.f(end+1) = 1
+s.f(end+1) = 2
+s.f = s.f(2:end)
+
+
+
+clear
+clc
+addpath 'spcup_2022_training_part1';
+path = 'spcup_2022_training_part1\*.wav';
+
+dataDir = 'spcup_2022_training_part1';
+% ads = audioDatastore(dataDir)
+ads = audioDatastore(dataDir,'IncludeSubfolders',true, ...
+    'FileExtensions','.wav', ...
+    'LabelSource','foldernames')
+
+
+
+labels_csv = readtable('labels.csv');
+label_csv = table2array(labels_csv(:,2));
+
+ads.Files = ads.Files(1:500)
+ads.Labels = label_csv(1:500)
+
+[adsTrain, adsTest] = splitEachLabel(ads,0.8);
+
+adsTrain
+trainDatastoreCount = countEachLabel(adsTrain)
+
+adsTest
+testDatastoreCount = countEachLabel(adsTest)
+
+%% Feature Extraction
+
+
+[sampleTrain, dsInfo] = read(adsTrain);
+reset(adsTrain)
+
+fs = dsInfo.SampleRate;
+windowLength = round(0.03*fs);
+overlapLength = round(0.025*fs);
+
+features = [];
+labels = [];
+while hasdata(adsTrain)
+    
+    [audioIn,dsInfo] = read(adsTrain);
+    
+    melC = mfcc(audioIn,fs,'WindowLength',windowLength,'OverlapLength',overlapLength);
+    f0 = pitch(audioIn,fs,'WindowLength',windowLength,'OverlapLength',overlapLength);
+    feat = [melC,f0];
+    
+    voicedSpeech = isVoicedSpeech(audioIn,fs,windowLength,overlapLength);
+    
+    feat(~voicedSpeech,:) = [];
+    label = repelem(dsInfo.Label,size(feat,1));
+    
+    features = [features;feat];
+    labels = [labels,label];
+end
+
+%정규화
+M = mean(features,1);
+S = std(features,[],1);
+features = (features-M)./S;
+
+%% Training a Classifier
+trainedClassifier = fitcknn( ...
+    features, ...
+    labels, ...
+    'Distance','euclidean', ...
+    'NumNeighbors',5, ...
+    'DistanceWeight','squaredinverse', ...
+    'Standardize',false, ...
+    'ClassNames',unique(labels));
+
+k = 5;
+group = labels;
+c = cvpartition(group,'KFold',k); % 5-fold stratified cross validation
+partitionedModel = crossval(trainedClassifier,'CVPartition',c);
+
+validationAccuracy = 1 - kfoldLoss(partitionedModel,'LossFun','ClassifError');
+fprintf('\nValidation accuracy = %.2f%%\n', validationAccuracy*100);
+
+validationPredictions = kfoldPredict(partitionedModel);
+figure
+cm = confusionchart(labels,validationPredictions,'title','Validation Accuracy');
+cm.ColumnSummary = 'column-normalized';
+cm.RowSummary = 'row-normalized';
+
+
+
+%% Testing the Classifier
+features = [];
+labels = [];
+numVectorsPerFile = [];
+while hasdata(adsTest)
+    [audioIn,dsInfo] = read(adsTest);
+    
+    melC = mfcc(audioIn,fs,'WindowLength',windowLength,'OverlapLength',overlapLength);
+    f0 = pitch(audioIn,fs,'WindowLength',windowLength,'OverlapLength',overlapLength);
+    feat = [melC,f0];
+    
+    voicedSpeech = isVoicedSpeech(audioIn,fs,windowLength,overlapLength);
+    
+    feat(~voicedSpeech,:) = [];
+    numVec = size(feat,1);
+    
+    label = repelem(dsInfo.Label,numVec);
+    
+    numVectorsPerFile = [numVectorsPerFile,numVec];
+    features = [features;feat];
+    labels = [labels,label];
+end
+features = (features-M)./S;
+
+prediction = predict(trainedClassifier,features);
+prediction = categorical(string(prediction));
+labels = categorical(string(labels));
+figure('Units','normalized','Position',[0.4 0.4 0.4 0.4])
+cm = confusionchart(labels,prediction,'title','Test Accuracy (Per Frame)');
+cm.ColumnSummary = 'column-normalized';
+cm.RowSummary = 'row-normalized';
+
+r2 = prediction(1:numel(adsTest.Files));
+idx = 1;
+for ii = 1:numel(adsTest.Files)
+    r2(ii) = mode(prediction(idx:idx+numVectorsPerFile(ii)-1));
+    idx = idx + numVectorsPerFile(ii);
+end
+
+figure('Units','normalized','Position',[0.4 0.4 0.4 0.4])
+adsTest.Labels = categorical(string(adsTest.Labels));
+cm = confusionchart(adsTest.Labels,r2,'title','Test Accuracy (Per File)');
+cm.ColumnSummary = 'column-normalized';
+cm.RowSummary = 'row-normalized';
+
+
+
+function voicedSpeech = isVoicedSpeech(x,fs,windowLength,overlapLength)
+
+pwrThreshold = -40;
+[segments,~] = buffer(x,windowLength,overlapLength,'nodelay');
+pwr = pow2db(var(segments));
+isSpeech = (pwr > pwrThreshold);
+
+zcrThreshold = 1000;
+zeroLoc = (x==0);
+crossedZero = logical([0;diff(sign(x))]);
+crossedZero(zeroLoc) = false;
+[crossedZeroBuffered,~] = buffer(crossedZero,windowLength,overlapLength,'nodelay');
+zcr = (sum(crossedZeroBuffered,1)*fs)/(2*windowLength);
+isVoiced = (zcr < zcrThreshold);
+
+voicedSpeech = isSpeech & isVoiced;
+
+end
+
+% 
+% 
+% List = dir(path);
+% L = length(List);
+% 
+% labels = readtable('labels.csv');
+% fn = table2array(labels(:,1));
+% label = table2array(labels(:,2));
+% 
+% fileNameST = struct('label_0',{1},'label_1',{0},'label_2',{0},'label_3',{0},'label_4',{0})
+% for i = 1:10
+%    [data, fs] = audioread(cell2mat(fn(i))); 
+%    data = data.'
+%    dataCell = num2cell(data);
+%    fileNameST.label_0(end+1)= data;
+% %    eval(sprintf('fileNameST.label_%d(end+1) = (data);', label(i)));
+% end
