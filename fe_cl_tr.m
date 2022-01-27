@@ -1,3 +1,7 @@
+%% add required libraries to the path
+% clear; close all; clc;
+%addpath(genpath('C:\Users\TCLAB-JG\Desktop\extract_lfcc.m'))
+
 %% Prepare Data
 dataDir = 'C:\Users\TCLAB-JG\Desktop\spcup_2022\audiofile_shorted500';
 ads = audioDatastore(dataDir,'IncludeSubfolders',true, ...
