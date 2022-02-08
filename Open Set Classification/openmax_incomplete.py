@@ -59,12 +59,54 @@ def get_train_test():
 
 data = get_train_test()
 
+data[0].shape,data[1].shape,data[2].shape,data[3].shape
+
+x_train = data[0]
+x_test = data[1]
+y_train = data[2]
+y_test = data[3]
+
+x_test.shape
+
 np.random.seed(12345)
 
-from keras.models import load_model
-model = load_model('/content/MNIST_CNN.h5')
+# from keras.models import load_model
+# model = load_model('/content/MNIST_CNN_tanh.h5')
+import sys
+import tensorflow as tf
+import keras
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Flatten
+from keras.layers.convolutional import Conv2D, MaxPooling2D
+import numpy as np
 
-#@title
+model = Sequential()
+model.add(Conv2D(32, kernel_size=(5, 5), strides=(1, 1), padding='same',
+                 activation='relu',
+                 input_shape=(28,28,1)))
+model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
+model.add(Conv2D(64, (2, 2), activation='relu', padding='same'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Dropout(0.25))
+model.add(Flatten())
+model.add(Dense(1000, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(10, activation='softmax'))
+model.summary()
+
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+hist = model.fit(x_train, y_train,
+                 batch_size=128,
+                 epochs=20,
+                 verbose=1, 
+                 validation_data=(x_test, y_test))
+
+model.save('MNIST_CNN_customed.h5')
+
+from keras.models import load_model
+model = load_model('MNIST_CNN_customed.h5')
+
+#@title  { form-width: "5%" }
 def get_correct_classified(pred, y):
     pred = (pred > 0.5) * 1
     res = np.all(pred == y, axis=1)
@@ -90,12 +132,17 @@ def seperate_data(x, y):
     return dataset_x, dataset_y
 
 def get_activations(model, layer, X_batch):
-    # print (model.layers[6].output)
-    get_activations = K.function(
-        [model.layers[0].input, K.learning_phase()],
+    print (model.layers[0].input)
+    print (model.layers[0].output)
+    print (model.layers[6].input)
+    print (model.layers[6].output)
+    print('-------------------------------')
+    get_activations = K.function(           # 케라스 함수들을 객체화함
+        [model.layers[0].input],  # 여기서 어떻게 처리?  , K.learning_phase()
         [model.layers[layer].output])
-    activations = get_activations([X_batch, 0])[0]
-    # print (activations.shape)
+    print('안녕하세요')
+    activations = get_activations([X_batch, 0])[0]   # 여기서 자꾸 에러 뜸
+    print(activations.shape)
     return activations
 
 def compute_feature(x, model):
@@ -120,7 +167,45 @@ def compute_distances(mean_feature, feature, category_name):
     distances = {'eucos': eucos_dist, 'cosine': cos_dist, 'euclidean': eu_dist}
     return distances
 
-#@title
+def compute_openmax(model, imagearr):
+    mean = np.load('data/mean.npy', allow_pickle=True)
+    distance = np.load('data/distance.npy', allow_pickle=True)
+    # Use loop to find the good parameters
+    # alpharank_list = [1,2,3,4,5,5,6,7,8,9,10]
+    # tail_list = list(range(0,21))
+
+    alpharank_list = [10]
+    # tail_list = [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+    tail_list = [5]
+    # total = 0
+    for alpha in alpharank_list:
+        weibull_model = {}
+        openmax = None
+        softmax = None
+        for tail in tail_list:
+            # print ('Alpha ',alpha,' Tail ',tail)
+            # print ('++++++++++++++++++++++++++++')
+            weibull_model = build_weibull(mean, distance, tail)
+            openmax, softmax = recalibrate_scores(
+                weibull_model, label, imagearr, alpharank=alpha)
+
+            # print ('Openmax: ',np.argmax(openmax))
+            # print ('Softmax: ',np.argmax(softmax))
+            # print ('opemax lenght',openmax.shape)
+            # print ('openmax',np.argmax(openmax))
+            # print ('openmax',openmax)
+            # print ('softmax',softmax.shape)
+            # print ('softmax',np.argmax(softmax))
+            # if np.argmax(openmax) == np.argmax(softmax):
+            # if np.argmax(openmax) == 0 and np.argmax(softmax) == 0:
+            # print ('########## Parameters found ############')
+            # print ('Alpha ',alpha,' Tail ',tail)
+            # print ('########## Parameters found ############')
+            #    total += 1
+            # print ('----------------------------')
+    return np.argmax(softmax), np.argmax(openmax)
+
+#@title  { form-width: "5%" }
 ### Weibull functions
 
 def build_weibull(mean, distance, tail):
@@ -181,8 +266,11 @@ def query_weibull(
 
     return category_weibull
 
-#@title
+#@title  { form-width: "5%" }
 ### compute openmax
+import scipy as sp
+from scipy.io import loadmat
+
 NCHANNELS = 1
 NCLASSES = 10
 ALPHA_RANK = 6
@@ -282,7 +370,7 @@ def recalibrate_scores(weibull_model, labellist, imgarr,
             # print (
             #    category_weibull[0], category_weibull[1],category_weibull[2])
 
-            channel_distance = compute_distance(
+            channel_distance = compute_distances(
                 channel_scores, channel, category_weibull[0],
                 distance_type=distance_type)
             # print ('cd',channel_distance)
@@ -312,7 +400,7 @@ def recalibrate_scores(weibull_model, labellist, imgarr,
     softmax_probab = imgarr['scores'].ravel()
     return sp.asarray(openmax_probab), sp.asarray(softmax_probab)
 
-#@title
+#@title  { form-width: "5%" }
 ### openmax.py 
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -370,7 +458,7 @@ def openmax_known_class(model, y, data):
         #    total += 1
     # print ('correct classified',total,'total set',len(y))
 
-#@title
+#@title  { form-width: "5%" }
 ### openmax_utils.py
 
 def parse_synsetfile(synsetfname):
@@ -413,7 +501,7 @@ def create_model(model, data):
     x_all = np.concatenate((x_train, x_test), axis=0)
     y_all = np.concatenate((y_train, y_test), axis=0)
     pred = model.predict(x_all)
-    print(pred)
+    print(pred.shape)
 
     index = get_correct_classified(pred, y_all)
     x1_test = x_all[index]
@@ -422,7 +510,8 @@ def create_model(model, data):
     y1_test1 = y1_test.argmax(1)
 
     sep_x, sep_y = seperate_data(x1_test, y1_test1)
-    print('hello_1')
+    print(len(sep_x), len(sep_y))
+    print(sep_x[0].shape, sep_y[0].shape)
 
     feature = {}
     feature["score"] = []
@@ -434,12 +523,42 @@ def create_model(model, data):
     for i in range(len(sep_y)):
         print(i, sep_x[i].shape)
         weibull_model[label[i]] = {}
-        score, fc8 = compute_feature(sep_x[i], model)  # 완료
-        mean = compute_mean_vector(fc8)   # 완료
-        distance = compute_distances(mean, fc8, sep_y)  #완료
+        score, fc8 = compute_feature(sep_x[i], model)  # 여기서 막힘
+        print('hello_2')
+        mean = compute_mean_vector(fc8)   # ?
+        print('hello_3')
+        distance = compute_distances(mean, fc8, sep_y)  # ?
+        print('hello_4')
         feature_mean.append(mean)
         feature_distance.append(distance)
     np.save('data/mean', feature_mean)
+    print('hello_5')
     np.save('data/distance', feature_distance)
+    print('hello_6')
 
 create_model(model, data)
+
+x_train, x_test, y_train, y_test  = data
+
+for i in range(5):
+    random_char = np.random.randint(0,len(x_test))
+
+    test_x1 = x_test[random_char]
+    test_y1 = y_test[random_char]
+
+    # Compute fc8 activation for the given image
+    activation = compute_activation(model,test_x1)
+    #print (activation)
+
+    # Compute openmax activation
+
+    softmax,openmax = compute_openmax(model,activation)
+    #openmax_unknown_class(model)
+    print ('Actual Label: ', np.argmax(test_y1))
+    print ('Prediction Softmax: ', softmax)
+    if openmax == 10:
+        openmax = 'Unknown'
+    print ('Prediction openmax: ',openmax)
+    
+    labels = (np.argmax(test_y1), softmax, openmax)
+    image_show(test_x1,test_y1)
