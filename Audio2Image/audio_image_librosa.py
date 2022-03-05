@@ -125,8 +125,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 import keras
 from keras import layers
-from keras import layers
-import keras
 
 ### wav 파일 스펙토그램 png 파일로 변환 후 저장하기
 # for filename in os.listdir(f'/content/drive/MyDrive/Dataset/audiofile_shorted500'):
